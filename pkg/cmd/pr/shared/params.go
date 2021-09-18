@@ -157,6 +157,8 @@ type FilterOptions struct {
 	Mention    string
 	Milestone  string
 	Search     string
+	// filter by draft/non-draft, `nil` means "no filter"
+	Draft *bool
 
 	Fields []string
 }
@@ -241,7 +243,9 @@ func SearchQueryBuild(options FilterOptions) string {
 	if options.Search != "" {
 		q.AddQuery(options.Search)
 	}
-
+	if options.Draft != nil {
+		q.SetDraft(*options.Draft)
+	}
 	return q.String()
 }
 

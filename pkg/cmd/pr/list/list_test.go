@@ -176,14 +176,41 @@ func TestPRList_filteringAssignee(t *testing.T) {
 	}
 }
 
-func TestPRList_filteringAssigneeLabels(t *testing.T) {
-	http := initFakeHTTP()
-	defer http.Verify(t)
+func TestPRList_filteringDraft(t *testing.T) {
+	tests := []struct {
+		name          string
+		cli           string
+		expectedQuery string
+	}{
+		{
+			"draft",
+			"--draft=1",
+			`repo:OWNER/REPO is:pr is:open draft:true`,
+		},
+		{
+			"non-draft",
+			"--draft=false",
+			`repo:OWNER/REPO is:pr is:open draft:false`,
+		}}
 
-	_, err := runCommand(http, true, `-l one,two -a hubot`)
-	if err == nil && err.Error() != "multiple labels with --assignee are not supported" {
-		t.Fatal(err)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			http := initFakeHTTP()
+			defer http.Verify(t)
+
+			http.Register(
+				httpmock.GraphQL(`query PullRequestSearch\b`),
+				httpmock.GraphQLQuery(`{}`, func(_ string, params map[string]interface{}) {
+					assert.Equal(t, test.expectedQuery, params["q"].(string))
+				}))
+
+			_, err := runCommand(http, true, test.cli)
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
+
 }
 
 func TestPRList_withInvalidLimitFlag(t *testing.T) {
@@ -191,24 +218,50 @@ func TestPRList_withInvalidLimitFlag(t *testing.T) {
 	defer http.Verify(t)
 
 	_, err := runCommand(http, true, `--limit=0`)
-	if err == nil && err.Error() != "invalid limit: 0" {
-		t.Errorf("error running command `issue list`: %v", err)
-	}
+	assert.NotNil(t, err)
+	assert.Equal(t, err.Error(), "invalid value for --limit: 0")
 }
 
 func TestPRList_web(t *testing.T) {
-	http := initFakeHTTP()
-	defer http.Verify(t)
-
-	_, cmdTeardown := run.Stub()
-	defer cmdTeardown(t)
-
-	output, err := runCommand(http, true, "--web -a peter -l bug -l docs -L 10 -s merged -B trunk")
-	if err != nil {
-		t.Errorf("error running command `pr list` with `--web` flag: %v", err)
+	tests := []struct {
+		name               string
+		cli                string
+		expectedBrowserURL string
+	}{
+		{
+			"test",
+			"-a peter -l bug -l docs -L 10 -s merged -B trunk",
+			"https://github.com/OWNER/REPO/pulls?q=is%3Apr+is%3Amerged+assignee%3Apeter+label%3Abug+label%3Adocs+base%3Atrunk",
+		},
+		{
+			"draft",
+			"--draft=true",
+			"https://github.com/OWNER/REPO/pulls?q=is%3Apr+is%3Aopen+draft%3Atrue",
+		},
+		{
+			"non-draft",
+			"--draft=0",
+			"https://github.com/OWNER/REPO/pulls?q=is%3Apr+is%3Aopen+draft%3Afalse",
+		},
 	}
 
-	assert.Equal(t, "", output.String())
-	assert.Equal(t, "Opening github.com/OWNER/REPO/pulls in your browser.\n", output.Stderr())
-	assert.Equal(t, "https://github.com/OWNER/REPO/pulls?q=is%3Apr+is%3Amerged+assignee%3Apeter+label%3Abug+label%3Adocs+base%3Atrunk", output.BrowsedURL)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			http := initFakeHTTP()
+			defer http.Verify(t)
+
+			_, cmdTeardown := run.Stub()
+			defer cmdTeardown(t)
+
+			output, err := runCommand(http, true, "--web "+test.cli)
+			if err != nil {
+				t.Errorf("error running command `pr list` with `--web` flag: %v", err)
+			}
+
+			assert.Equal(t, "", output.String())
+			assert.Equal(t, "Opening github.com/OWNER/REPO/pulls in your browser.\n", output.Stderr())
+			assert.Equal(t, test.expectedBrowserURL, output.BrowsedURL)
+		})
+	}
+
 }
